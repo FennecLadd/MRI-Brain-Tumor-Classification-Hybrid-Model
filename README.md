@@ -664,6 +664,1018 @@ $$
 
 Therefore:
 
-| RNN                      | LTC / Liquid Network |
-| ------------------------ | -------------------- |
-| Discrete-time recurrence |                      |
+| RNN                                  | LTC / Liquid Network                |
+| ------------------------------------ | ----------------------------------- |
+| Discrete-time recurrence             | Continuous-time dynamics            |
+| \(h_t=f(h_{t-1},x_t)\)               | \(dh/dt=f(h,x,t)\)                  |
+| Fixed discrete update                | Dynamical state evolution           |
+| Natural for discrete sequences       | Natural for continuous-time signals |
+| No explicit time constant adaptation | Adaptive/liquid time constants      |
+
+---
+
+# 20. LNN vs LSTM
+
+LSTM uses explicit gates:
+
+```text
+Forget Gate
+Input Gate
+Output Gate
+```
+
+to control information flow through a cell state.
+
+An LTC instead models the hidden state using continuous-time differential equations with adaptive time constants.
+
+### LSTM
+
+$$
+c_t=f(c_{t-1},x_t)
+$$
+
+### LTC
+
+$$
+\frac{dh(t)}{dt}
+=
+F(h(t),x(t),\tau(t))
+$$
+
+Therefore, LSTM and LNN are not simply "better" and "worse" versions of one another.
+
+They use different mathematical approaches to state evolution.
+
+---
+
+# 21. LNN vs Transformer
+
+Transformers rely primarily on:
+
+> **self-attention**
+
+to model relationships between elements in a sequence.
+
+A liquid network instead models:
+
+> **continuous-time state dynamics**
+
+Therefore:
+
+```text
+Transformer
+    ↓
+Attention-based sequence modeling
+
+
+LNN / LTC
+    ↓
+Continuous-time dynamical modeling
+```
+
+Transformers are highly effective for many large-scale sequence problems, whereas liquid networks are particularly interesting when continuous-time dynamics, temporal sparsity, low-latency computation, or resource efficiency are important.
+
+---
+
+# 22. Canonical LTC vs This Project's LNN Layer
+
+This distinction is important.
+
+The final implementation in this project uses a simplified LNN-inspired layer:
+
+```python
+class LNNLayer(nn.Module):
+    def __init__(self, d):
+        super().__init__()
+        self.fc = nn.Linear(d, d)
+
+    def forward(self, x):
+        return x + torch.tanh(self.fc(x))
+```
+
+Mathematically:
+
+$$
+h_{out}
+=
+h+\tanh(Wh+b)
+$$
+
+This provides:
+
+* nonlinear transformation
+* residual connection
+* feature refinement
+* stable information flow
+
+However, it does **not explicitly contain**:
+
+* continuous-time state \(h(t)\)
+* \(dh/dt\)
+* adaptive time constant \(\tau\)
+* an ODE solver
+* explicit recurrent temporal state
+
+Therefore, this implementation should technically be described as:
+
+> **LNN-inspired residual nonlinear layers**
+
+rather than a full canonical LTC.
+
+---
+
+# 23. Why Include LNN-Inspired Layers?
+
+The CNN extracts spatial information from the MRI:
+
+```text
+MRI
+ ↓
+edges
+ ↓
+textures
+ ↓
+local structures
+ ↓
+high-level spatial features
+```
+
+The resulting 256-dimensional representation is then passed through three nonlinear residual transformations.
+
+Conceptually:
+
+```text
+MRI
+ ↓
+CNN
+ ↓
+Spatial representation
+ ↓
+LNN-inspired transformations
+ ↓
+Refined representation
+ ↓
+Classifier
+```
+
+This creates a hybrid CNN + liquid-inspired architecture.
+
+For a truly canonical LNN application, the strongest motivation would be when temporal information is available, such as:
+
+* longitudinal MRI sequences
+* dynamic imaging
+* physiological time-series
+* patient monitoring signals
+
+An individual static MRI is not inherently a temporal sequence, so the liquid component in this implementation should be viewed as an experimental architectural component rather than a claim that the image itself contains temporal dynamics.
+
+---
+
+# 24. Three LNN Layers
+
+The final model contains:
+
+```text
+256
+ ↓
+LNN Layer 1
+ ↓
+256
+ ↓
+LNN Layer 2
+ ↓
+256
+ ↓
+LNN Layer 3
+ ↓
+256
+```
+
+Each layer computes:
+
+$$
+h_{k+1}
+=
+h_k+\tanh(W_kh_k+b_k)
+$$
+
+Therefore:
+
+$$
+h_1=h_0+\tanh(W_1h_0+b_1)
+$$
+
+$$
+h_2=h_1+\tanh(W_2h_1+b_2)
+$$
+
+$$
+h_3=h_2+\tanh(W_3h_2+b_3)
+$$
+
+The final representation \(h_3\) is passed to the classifier.
+
+---
+
+# 25. Residual Connection
+
+The LNN-inspired layer contains:
+
+$$
+x+\tanh(Wx+b)
+$$
+
+The addition of \(x\) is a residual connection.
+
+Instead of learning a complete transformation:
+
+$$
+y=F(x)
+$$
+
+the layer learns:
+
+$$
+y=x+F(x)
+$$
+
+This allows the layer to preserve information from the previous representation while learning an additional nonlinear correction.
+
+---
+
+# 26. Final Classification Layer
+
+The final layer is:
+
+$$
+256\rightarrow6
+$$
+
+It produces six logits:
+
+```text
+z0 → Normal
+z1 → Tumor
+z2 → Stroke
+z3 → Infection
+z4 → Degenerative
+z5 → Structural
+```
+
+The predicted class is:
+
+$$
+\hat y=\arg\max_i(z_i)
+$$
+
+The logits are used directly by the classification loss during training.
+
+---
+
+# 27. Class Imbalance
+
+The dataset is not uniformly distributed across the six categories.
+
+A model trained only with ordinary loss can become biased toward classes with more samples.
+
+For example:
+
+```text
+Majority class
+████████████████████
+
+Minority class
+████
+```
+
+A model could achieve high overall accuracy while performing poorly on minority categories.
+
+Therefore, class imbalance is explicitly addressed.
+
+---
+
+# 28. Class Weighting
+
+The final implementation derives class weights from the training-set frequencies.
+
+The general strategy is:
+
+$$
+w_c\propto\frac{1}{\sqrt{N_c}}
+$$
+
+where:
+
+* \(N_c\) = number of training samples in class \(c\)
+* \(w_c\) = class weight
+
+Thus:
+
+```text
+more samples
+     ↓
+lower weight
+
+fewer samples
+     ↓
+higher weight
+```
+
+This makes errors on underrepresented classes contribute more strongly to training.
+
+---
+
+# 29. Focal Loss
+
+The final model uses weighted focal loss.
+
+The standard focal-loss formulation is:
+
+$$
+FL(p_t)
+=
+-\alpha_t(1-p_t)^\gamma\log(p_t)
+$$
+
+where:
+
+* \(p_t\) = predicted probability for the correct class
+* \(\alpha_t\) = class-specific weighting
+* \(\gamma\) = focusing parameter
+
+The project uses:
+
+$$
+\gamma=2
+$$
+
+---
+
+# 30. Why Focal Loss?
+
+Cross entropy can allow easy examples to dominate the training objective when there are many of them.
+
+Focal loss introduces:
+
+$$
+(1-p_t)^\gamma
+$$
+
+For an easy example:
+
+$$
+p_t\approx1
+$$
+
+therefore:
+
+$$
+(1-p_t)^\gamma\approx0
+$$
+
+Its contribution is reduced.
+
+For a difficult example:
+
+$$
+p_t\ll1
+$$
+
+the contribution remains relatively large.
+
+Therefore focal loss emphasizes:
+
+> **hard-to-classify examples**
+
+while class weighting emphasizes:
+
+> **underrepresented classes**
+
+Combining both provides a strategy for dealing with the dataset's class imbalance.
+
+---
+
+# 31. Optimization
+
+The final model uses the **Adam optimizer**.
+
+```text
+Optimizer: Adam
+Learning rate: 3 × 10⁻⁵
+Weight decay: 1 × 10⁻⁴
+```
+
+Adam maintains moving estimates of gradients and squared gradients and adapts the parameter update accordingly.
+
+Conceptually:
+
+$$
+\theta_{t+1}
+=
+\theta_t
+-
+\eta
+\frac{\hat m_t}
+{\sqrt{\hat v_t}+\epsilon}
+$$
+
+where:
+
+* \(\eta\) = learning rate
+* \(\hat m_t\) = estimated first moment
+* \(\hat v_t\) = estimated second moment
+
+---
+
+# 32. Regularization
+
+The project uses several regularization mechanisms.
+
+### Dropout
+
+$$
+p=0.3
+$$
+
+Randomly removes activations during training.
+
+### Weight decay
+
+$$
+10^{-4}
+$$
+
+Discourages excessively large weights.
+
+### Data augmentation
+
+Introduces controlled variations of training images.
+
+Together these techniques aim to reduce overfitting.
+
+---
+
+# 33. Training Configuration
+
+The final experiment uses approximately:
+
+| Parameter                |       Value |
+| ------------------------ | ----------: |
+| Input size               | `224 × 224` |
+| Channels                 |           1 |
+| Batch size               |          16 |
+| Epochs                   |         100 |
+| Optimizer                |        Adam |
+| Learning rate            |      `3e-5` |
+| Weight decay             |      `1e-4` |
+| Dropout                  |       `0.3` |
+| Focal-loss gamma         |       `2.0` |
+| Number of output classes |           6 |
+
+Fixed random seeds are also used for reproducibility.
+
+---
+
+# 34. Training Process
+
+For every batch:
+
+```text
+Input MRI
+    ↓
+Forward Pass
+    ↓
+CNN Feature Extraction
+    ↓
+LNN-inspired Layers
+    ↓
+6 Logits
+    ↓
+Weighted Focal Loss
+    ↓
+Backpropagation
+    ↓
+Adam Update
+```
+
+The PyTorch training sequence follows the standard pattern:
+
+```python
+optimizer.zero_grad()
+
+output = model(images)
+
+loss = criterion(output, labels)
+
+loss.backward()
+
+optimizer.step()
+```
+
+---
+
+# 35. Evaluation Metrics
+
+Accuracy is not sufficient for an imbalanced medical-image classification task.
+
+The project therefore evaluates:
+
+* Accuracy
+* Precision
+* Recall
+* F1-score
+* Confusion matrix
+* TP
+* FP
+* FN
+* TN
+
+---
+
+# 36. Accuracy
+
+$$
+Accuracy=
+\frac{TP+TN}{TP+TN+FP+FN}
+$$
+
+Accuracy measures the overall proportion of correct predictions.
+
+However, it can be misleading when classes are imbalanced.
+
+---
+
+# 37. Precision
+
+$$
+Precision=
+\frac{TP}{TP+FP}
+$$
+
+It answers:
+
+> Of the samples predicted as a particular class, how many actually belong to that class?
+
+---
+
+# 38. Recall
+
+$$
+Recall=
+\frac{TP}{TP+FN}
+$$
+
+It answers:
+
+> Of all samples that actually belong to a class, how many did the model identify?
+
+Recall is particularly important in medical screening contexts because false negatives may be consequential.
+
+---
+
+# 39. F1 Score
+
+$$
+F1=
+2\frac{Precision\times Recall}
+{Precision+Recall}
+$$
+
+F1 balances precision and recall.
+
+---
+
+# 40. Confusion Matrix
+
+A confusion matrix shows the relationship between actual and predicted classes.
+
+Example:
+
+```text
+                    Predicted
+             N   T   S   I   D   St
+Actual N
+       T
+       S
+       I
+       D
+       St
+```
+
+The diagonal represents correct predictions.
+
+Off-diagonal entries represent misclassifications.
+
+For example:
+
+```text
+Actual Infection
+        ↓
+Predicted Stroke
+```
+
+indicates that the model confused Infection with Stroke.
+
+---
+
+# 41. Why Confusion Matrix Matters
+
+A model may have good overall accuracy while failing badly on one specific class.
+
+The confusion matrix helps identify:
+
+* which classes are confused
+* minority-class weaknesses
+* systematic errors
+* potential dataset ambiguity
+* classes requiring additional data
+
+This is particularly important for medical classification.
+
+---
+
+# 42. Overfitting
+
+A major concern in deep learning is overfitting.
+
+If:
+
+```text
+Training accuracy ↑↑
+Validation accuracy ↑ but much lower
+```
+
+the model may be learning training-specific patterns rather than generalizable representations.
+
+The project uses:
+
+* augmentation
+* dropout
+* weight decay
+* validation monitoring
+* class-aware loss
+
+to help control overfitting.
+
+---
+
+# 43. Important Experimental Limitation
+
+For rigorous evaluation, the test set should ideally be used only for final evaluation.
+
+If test performance is monitored repeatedly during training or used to make architectural decisions, it can indirectly influence experimentation.
+
+A cleaner workflow is:
+
+```text
+Train
+ ↓
+Validation
+ ↓
+Select final model
+ ↓
+Evaluate ONCE on test set
+```
+
+This is a methodological improvement for future versions.
+
+---
+
+# 44. Important Medical-AI Limitation: Patient Leakage
+
+Medical datasets can contain multiple images from the same patient.
+
+If images from one patient appear in both training and testing:
+
+```text
+Patient A
+ ├── MRI 1 → Training
+ └── MRI 2 → Testing
+```
+
+the model may learn patient-specific characteristics.
+
+This can make test performance appear better than true generalization.
+
+A better strategy is:
+
+```text
+Patient A → Train only
+
+Patient B → Validation only
+
+Patient C → Test only
+```
+
+when patient identifiers are available.
+
+---
+
+# 45. Canonical LTC as a Future Extension
+
+A natural extension of this project would be to replace the simplified LNN-inspired layers with an actual **Liquid Time-Constant Network**.
+
+The canonical architecture would introduce continuous-time hidden-state dynamics such as:
+
+$$
+\frac{dh}{dt}
+=
+F(h,x,\tau)
+$$
+
+with adaptive time constants.
+
+The resulting architecture could be:
+
+```text
+MRI / MRI sequence
+       ↓
+CNN feature extractor
+       ↓
+Temporal feature sequence
+       ↓
+Canonical LTC
+       ↓
+Continuous-time hidden state
+       ↓
+Classifier
+```
+
+This would be particularly meaningful if the input consisted of:
+
+* multiple MRI scans over time
+* temporal imaging sequences
+* physiological signals associated with MRI
+* longitudinal patient observations
+
+The original LTC work establishes this continuous-time dynamical formulation, while later CfC work derives efficient closed-form approximations to LTC dynamics to reduce dependence on numerical differential-equation solvers.
+
+---
+
+# 46. LTC vs CfC
+
+Two important developments in liquid neural networks are:
+
+### Liquid Time-Constant Network (LTC)
+
+Uses continuous-time differential equations and adaptive time constants.
+
+```text
+Input
+ ↓
+Liquid dynamics
+ ↓
+ODE
+ ↓
+Numerical solver
+ ↓
+Hidden state
+```
+
+### Closed-form Continuous-time Network (CfC)
+
+CfC was developed to approximate LTC-style continuous-time dynamics in a closed form, reducing the computational burden associated with numerical ODE solving. The authors report substantial speed advantages over ODE-based counterparts.
+
+Conceptually:
+
+```text
+LTC
+ ↓
+Continuous dynamics
+ ↓
+Numerical ODE solving
+
+CfC
+ ↓
+Continuous-time formulation
+ ↓
+Closed-form approximation
+```
+
+---
+
+# 47. Why a Canonical LTC Would Be Interesting Here
+
+The current project primarily deals with static MRI images.
+
+Therefore, the strongest justification for canonical LTC would be to extend the project from:
+
+```text
+Single MRI
+```
+
+to:
+
+```text
+MRI sequence / longitudinal patient data
+```
+
+For example:
+
+```text
+MRI at t1
+      ↓
+MRI at t2
+      ↓
+MRI at t3
+      ↓
+CNN feature extraction
+      ↓
+Temporal sequence
+      ↓
+LTC
+      ↓
+Disease progression representation
+```
+
+The CNN would learn spatial information while the LTC would model how the representation changes over time.
+
+This would create a more natural **spatio-temporal CNN + LTC architecture**.
+
+---
+
+# 48. Project Strengths
+
+### 1. Hybrid architecture
+
+Combines convolutional spatial feature extraction with LNN-inspired nonlinear processing.
+
+### 2. Class imbalance handling
+
+Uses class-aware weighting and focal loss.
+
+### 3. Detailed evaluation
+
+Uses class-wise metrics and confusion matrices rather than relying only on accuracy.
+
+### 4. Reproducibility
+
+Uses fixed random seeds.
+
+### 5. Medical-AI awareness
+
+The project explicitly considers imbalance, generalization, and class-wise performance.
+
+---
+
+# 49. Limitations
+
+The current implementation has several limitations:
+
+1. The LNN component is LNN-inspired rather than canonical LTC.
+2. The current input is a static MRI image rather than a temporal sequence.
+3. Random image-level splitting can potentially cause patient-level leakage if multiple images belong to the same patient.
+4. The test set should ideally be reserved for one final evaluation.
+5. The six broad classes simplify the original 38-class problem.
+6. Performance on a single dataset does not establish clinical generalization.
+7. Horizontal flipping should be validated for anatomical appropriateness.
+8. Clinical deployment would require external validation and substantially more rigorous testing.
+
+---
+
+# 50. Future Improvements
+
+## Model Improvements
+
+* Implement a canonical LTC layer.
+* Experiment with CfC.
+* Compare CNN + LTC against CNN + LSTM.
+* Compare against modern CNN architectures.
+* Compare against vision transformers.
+* Investigate pretrained transfer learning.
+* Perform systematic hyperparameter optimization.
+
+## Data Improvements
+
+* Increase dataset size.
+* Use patient-level splitting.
+* Use external datasets for validation.
+* Investigate domain shift across hospitals/scanners.
+* Validate augmentation strategies with domain experts.
+
+## Evaluation Improvements
+
+* Report macro-F1.
+* Report class-wise sensitivity and specificity.
+* Evaluate calibration.
+* Perform external validation.
+* Perform statistical comparison between models.
+* Use confidence intervals where appropriate.
+
+## Explainability
+
+Potential future methods include:
+
+* Grad-CAM
+* Integrated Gradients
+* Saliency maps
+* Feature visualization
+
+These can help investigate whether the model is focusing on medically relevant regions rather than artifacts.
+
+---
+
+# 51. Research-Oriented Extension
+
+A more complete future architecture could be:
+
+```text
+              MRI Sequence
+                   │
+        ┌──────────┴──────────┐
+        │                     │
+       MRI₁                  MRI₂ ... MRIₙ
+        │                     │
+        ▼                     ▼
+     CNN Encoder          CNN Encoder
+        │                     │
+        └──────────┬──────────┘
+                   ▼
+          Temporal Feature
+              Sequence
+                   │
+                   ▼
+          Canonical LTC / CfC
+                   │
+                   ▼
+       Continuous-Time State
+                   │
+                   ▼
+             Classifier
+                   │
+                   ▼
+          Disease Category
+```
+
+This would make the use of a genuine liquid neural network much more theoretically motivated.
+
+---
+
+ Disclaimer
+
+This project is a research/academic machine-learning prototype and is **not a clinical diagnostic system**.
+
+Predictions from the model should not be used as a substitute for professional medical diagnosis.
+
+Clinical deployment would require appropriate clinical validation, independent testing, regulatory review, data governance, interpretability assessment, and clinician oversight.
+
+---
+
+# 58. References
+
+### Liquid Time-Constant Networks
+
+Hasani, R., Lechner, M., Amini, A., Rus, D., Grosu, R. et al.
+
+**Liquid Time-constant Networks.**
+
+The original work introduces continuous-time recurrent neural networks whose dynamics involve varying, state-coupled time constants.
+
+### Closed-form Continuous-time Neural Models
+
+Hasani et al.
+
+**Closed-form Continuous-time Neural Models.**
+
+This work develops closed-form approximations of LTC dynamics, reducing reliance on computationally expensive numerical differential-equation solvers.
+
+---
+
+Technologies Used
+
+```text
+Python
+PyTorch
+NumPy
+Pandas
+Scikit-learn
+Matplotlib
+Seaborn
+PIL / Pillow
+Jupyter Notebook
+Google Colab
+```
+
+---
+
+ Keywords
+
+```text
+Brain MRI Classification
+Medical Image Classification
+Deep Learning
+Computer Vision
+CNN
+CNN-18
+ResNet-inspired CNN
+Liquid Neural Networks
+Liquid Time-Constant Networks
+LTC
+CfC
+Focal Loss
+Class Imbalance
+PyTorch
+Medical AI
+Neuroimaging
+Image Classification
+```
